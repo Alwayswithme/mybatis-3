@@ -47,6 +47,7 @@ import org.apache.ibatis.mapping.ResultMap;
 import org.apache.ibatis.mapping.ResultMapping;
 import org.apache.ibatis.reflection.MetaClass;
 import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.reflection.ReflectorFactory;
 import org.apache.ibatis.reflection.factory.ObjectFactory;
 import org.apache.ibatis.session.AutoMappingBehavior;
 import org.apache.ibatis.session.Configuration;
@@ -73,6 +74,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   private final BoundSql boundSql;
   private final TypeHandlerRegistry typeHandlerRegistry;
   private final ObjectFactory objectFactory;
+  private final ReflectorFactory reflectorFactory;
 
   // nested resultmaps
   private final Map<CacheKey, Object> nestedResultObjects = new HashMap<CacheKey, Object>();
@@ -82,12 +84,12 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   // multiple resultsets
   private final Map<String, ResultMapping> nextResultMaps = new HashMap<String, ResultMapping>();
   private final Map<CacheKey, List<PendingRelation>> pendingRelations = new HashMap<CacheKey, List<PendingRelation>>();
-  
+
   private static class PendingRelation {
     public MetaObject metaObject;
     public ResultMapping propertyMapping;
   }
-  
+
   public DefaultResultSetHandler(Executor executor, MappedStatement mappedStatement, ParameterHandler parameterHandler, ResultHandler<?> resultHandler, BoundSql boundSql,
       RowBounds rowBounds) {
     this.executor = executor;
@@ -98,6 +100,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     this.boundSql = boundSql;
     this.typeHandlerRegistry = configuration.getTypeHandlerRegistry();
     this.objectFactory = configuration.getObjectFactory();
+    this.reflectorFactory = configuration.getReflectorFactory();
     this.resultHandler = resultHandler;
   }
 
@@ -143,7 +146,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   @Override
   public List<Object> handleResultSets(Statement stmt) throws SQLException {
     ErrorContext.instance().activity("handling results").object(mappedStatement.getId());
-    
+
     final List<Object> multipleResults = new ArrayList<Object>();
 
     int resultSetCount = 0;
@@ -269,7 +272,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     } else {
       handleRowValuesForSimpleResultMap(rsw, resultMap, resultHandler, rowBounds, parentMapping);
     }
-  }  
+  }
 
   private void ensureNoRowBounds() {
     if (configuration.isSafeRowBoundsEnabled() && rowBounds != null && (rowBounds.getLimit() < RowBounds.NO_ROW_LIMIT || rowBounds.getOffset() > RowBounds.NO_ROW_OFFSET)) {
@@ -281,10 +284,10 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   protected void checkResultHandler() {
     if (resultHandler != null && configuration.isSafeResultHandlerEnabled() && !mappedStatement.isResultOrdered()) {
       throw new ExecutorException("Mapped Statements with nested result mappings cannot be safely used with a custom ResultHandler. "
-          + "Use safeResultHandlerEnabled=false setting to bypass this check " 
+          + "Use safeResultHandlerEnabled=false setting to bypass this check "
           + "or ensure your statement returns ordered data and set resultOrdered=true on it.");
     }
-  } 
+  }
 
   private void handleRowValuesForSimpleResultMap(ResultSetWrapper rsw, ResultMap resultMap, ResultHandler<?> resultHandler, RowBounds rowBounds, ResultMapping parentMapping)
       throws SQLException {
@@ -337,7 +340,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     if (resultObject != null && !typeHandlerRegistry.hasTypeHandler(resultMap.getType())) {
       final MetaObject metaObject = configuration.newMetaObject(resultObject);
       boolean foundValues = !resultMap.getConstructorResultMappings().isEmpty();
-      if (shouldApplyAutomaticMappings(resultMap, false)) {        
+      if (shouldApplyAutomaticMappings(resultMap, false)) {
         foundValues = applyAutomaticMappings(rsw, resultMap, metaObject, null) || foundValues;
       }
       foundValues = applyPropertyMappings(rsw, resultMap, metaObject, lazyLoader, null) || foundValues;
@@ -374,9 +377,9 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       if (propertyMapping.getNestedResultMapId() != null) {
         // the user added a column attribute to a nested result map, ignore it
         column = null;
-      }      
-      if (propertyMapping.isCompositeResult() 
-          || (column != null && mappedColumnNames.contains(column.toUpperCase(Locale.ENGLISH))) 
+      }
+      if (propertyMapping.isCompositeResult()
+          || (column != null && mappedColumnNames.contains(column.toUpperCase(Locale.ENGLISH)))
           || propertyMapping.getResultSet() != null) {
         Object value = getPropertyMappingValue(rsw.getResultSet(), metaObject, propertyMapping, lazyLoader, columnPrefix);
         // issue #541 make property optional
@@ -449,42 +452,11 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     List<PendingRelation> parents = pendingRelations.get(parentKey);
     if (parents != null) {
       for (PendingRelation parent : parents) {
-        if (parent != null) {
-          final Object collectionProperty = instantiateCollectionPropertyIfAppropriate(parent.propertyMapping, parent.metaObject);
-          if (rowValue != null) {
-            if (collectionProperty != null) {
-              final MetaObject targetMetaObject = configuration.newMetaObject(collectionProperty);
-              targetMetaObject.add(rowValue);
-            } else {
-              parent.metaObject.setValue(parent.propertyMapping.getProperty(), rowValue);
-            }
-          }
+        if (parent != null && rowValue != null) {
+            linkObjects(parent.metaObject, parent.propertyMapping, rowValue);
         }
       }
     }
-  }
-
-  private Object instantiateCollectionPropertyIfAppropriate(ResultMapping resultMapping, MetaObject metaObject) {
-    final String propertyName = resultMapping.getProperty();
-    Object propertyValue = metaObject.getValue(propertyName);
-    if (propertyValue == null) {
-      Class<?> type = resultMapping.getJavaType();
-      if (type == null) {
-        type = metaObject.getSetterType(propertyName);
-      }
-      try {
-        if (objectFactory.isCollection(type)) {
-          propertyValue = objectFactory.create(type);
-          metaObject.setValue(propertyName, propertyValue);
-          return propertyValue;
-        }
-      } catch (Exception e) {
-        throw new ExecutorException("Error instantiating collection property for result '" + resultMapping.getProperty() + "'.  Cause: " + e, e);
-      }
-    } else if (objectFactory.isCollection(propertyValue.getClass())) {
-      return propertyValue;
-    }
-    return null;
   }
 
   private void addPendingChildRelation(ResultSet rs, MetaObject metaResultObject, ResultMapping parentMapping) throws SQLException {
@@ -549,7 +521,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   private Object createResultObject(ResultSetWrapper rsw, ResultMap resultMap, List<Class<?>> constructorArgTypes, List<Object> constructorArgs, String columnPrefix)
       throws SQLException {
     final Class<?> resultType = resultMap.getType();
-    final MetaClass metaType = MetaClass.forClass(resultType);
+    final MetaClass metaType = MetaClass.forClass(resultType, reflectorFactory);
     final List<ResultMapping> constructorMappings = resultMap.getConstructorResultMappings();
     if (typeHandlerRegistry.hasTypeHandler(resultType)) {
       return createPrimitiveResultObject(rsw, resultMap, columnPrefix);
@@ -792,7 +764,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       storeObject(resultHandler, resultContext, rowValue, parentMapping, rsw.getResultSet());
     }
   }
-  
+
   //
   // GET VALUE FROM ROW FOR NESTED RESULT MAP
   //
@@ -813,7 +785,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         boolean foundValues = !resultMap.getConstructorResultMappings().isEmpty();
         if (shouldApplyAutomaticMappings(resultMap, true)) {
           foundValues = applyAutomaticMappings(rsw, resultMap, metaObject, columnPrefix) || foundValues;
-        }        
+        }
         foundValues = applyPropertyMappings(rsw, resultMap, metaObject, lazyLoader, columnPrefix) || foundValues;
         putAncestor(absoluteKey, resultObject, resultMapId, columnPrefix);
         foundValues = applyNestedResultMappings(rsw, resultMap, metaObject, columnPrefix, combinedKey, true) || foundValues;
@@ -853,25 +825,20 @@ public class DefaultResultSetHandler implements ResultSetHandler {
             rowKey = createRowKey(nestedResultMap, rsw, ancestorColumnPrefix.get(nestedResultMapId));
             ancestorObject = ancestorObjects.get(rowKey);
           }
-          if (ancestorObject != null) { 
+          if (ancestorObject != null) {
             if (newObject) {
-              metaObject.setValue(resultMapping.getProperty(), ancestorObject);
+              linkObjects(metaObject, resultMapping, ancestorObject); // issue #385
             }
           } else {
             rowKey = createRowKey(nestedResultMap, rsw, columnPrefix);
-            final CacheKey combinedKey = combineKeys(rowKey, parentRowKey);            
+            final CacheKey combinedKey = combineKeys(rowKey, parentRowKey);
             Object rowValue = nestedResultObjects.get(combinedKey);
             boolean knownValue = (rowValue != null);
-            final Object collectionProperty = instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject);            
+            instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject); // mandatory            
             if (anyNotNullColumnHasValue(resultMapping, columnPrefix, rsw.getResultSet())) {
               rowValue = getRowValue(rsw, nestedResultMap, combinedKey, rowKey, columnPrefix, rowValue);
               if (rowValue != null && !knownValue) {
-                if (collectionProperty != null) {
-                  final MetaObject targetMetaObject = configuration.newMetaObject(collectionProperty);
-                  targetMetaObject.add(rowValue);
-                } else {
-                  metaObject.setValue(resultMapping.getProperty(), rowValue);
-                }
+                linkObjects(metaObject, resultMapping, rowValue);
                 foundValues = true;
               }
             }
@@ -982,7 +949,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   }
 
   private void createRowKeyForUnmappedProperties(ResultMap resultMap, ResultSetWrapper rsw, CacheKey cacheKey, String columnPrefix) throws SQLException {
-    final MetaClass metaType = MetaClass.forClass(resultMap.getType());
+    final MetaClass metaType = MetaClass.forClass(resultMap.getType(), reflectorFactory);
     List<String> unmappedColumnNames = rsw.getUnmappedColumnNames(resultMap, columnPrefix);
     for (String column : unmappedColumnNames) {
       String property = column;
@@ -1013,6 +980,39 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         cacheKey.update(value);
       }
     }
+  }
+
+  private void linkObjects(MetaObject metaObject, ResultMapping resultMapping, Object rowValue) {
+    final Object collectionProperty = instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject);
+    if (collectionProperty != null) {
+      final MetaObject targetMetaObject = configuration.newMetaObject(collectionProperty);
+      targetMetaObject.add(rowValue);
+    } else {
+      metaObject.setValue(resultMapping.getProperty(), rowValue);
+    }
+  }
+
+  private Object instantiateCollectionPropertyIfAppropriate(ResultMapping resultMapping, MetaObject metaObject) {
+    final String propertyName = resultMapping.getProperty();
+    Object propertyValue = metaObject.getValue(propertyName);
+    if (propertyValue == null) {
+      Class<?> type = resultMapping.getJavaType();
+      if (type == null) {
+        type = metaObject.getSetterType(propertyName);
+      }
+      try {
+        if (objectFactory.isCollection(type)) {
+          propertyValue = objectFactory.create(type);
+          metaObject.setValue(propertyName, propertyValue);
+          return propertyValue;
+        }
+      } catch (Exception e) {
+        throw new ExecutorException("Error instantiating collection property for result '" + resultMapping.getProperty() + "'.  Cause: " + e, e);
+      }
+    } else if (objectFactory.isCollection(propertyValue.getClass())) {
+      return propertyValue;
+    }
+    return null;
   }
 
 }
