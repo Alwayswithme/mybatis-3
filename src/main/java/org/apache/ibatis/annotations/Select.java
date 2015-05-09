@@ -27,4 +27,8 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 public @interface Select {
   String[] value();
+
+  boolean useCache() default true;
+
+  boolean flushCache() default false;
 }

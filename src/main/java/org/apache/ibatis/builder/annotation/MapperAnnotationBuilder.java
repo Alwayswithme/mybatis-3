@@ -94,6 +94,7 @@ public class MapperAnnotationBuilder {
   private Configuration configuration;
   private MapperBuilderAssistant assistant;
   private Class<?> type;
+  private CacheConfig cacheConfig;
 
   public MapperAnnotationBuilder(Configuration configuration, Class<?> type) {
     String resource = type.getName().replace('.', '/') + ".java (best guess)";
@@ -260,10 +261,10 @@ public class MapperAnnotationBuilder {
       Integer timeout = null;
       StatementType statementType = StatementType.PREPARED;
       ResultSetType resultSetType = ResultSetType.FORWARD_ONLY;
-      SqlCommandType sqlCommandType = getSqlCommandType(method);
+      SqlCommandType sqlCommandType = getSqlCommandTypeAndCacheConfig(method);
       boolean isSelect = sqlCommandType == SqlCommandType.SELECT;
-      boolean flushCache = !isSelect;
-      boolean useCache = isSelect;
+      boolean flushCache = cacheConfig.isFlushCache();
+      boolean useCache = cacheConfig.isUseCache();
 
       KeyGenerator keyGenerator;
       String keyProperty = "id";
@@ -286,8 +287,6 @@ public class MapperAnnotationBuilder {
       }
 
       if (options != null) {
-        flushCache = options.flushCache();
-        useCache = options.useCache();
         fetchSize = options.fetchSize() > -1 || options.fetchSize() == Integer.MIN_VALUE ? options.fetchSize() : null; //issue #348
         timeout = options.timeout() > -1 ? options.timeout() : null;
         statementType = options.statementType();
@@ -439,9 +438,12 @@ public class MapperAnnotationBuilder {
     return languageDriver.createSqlSource(configuration, sql.toString().trim(), parameterTypeClass);
   }
 
-  private SqlCommandType getSqlCommandType(Method method) {
+  private SqlCommandType getSqlCommandTypeAndCacheConfig(Method method) {
     Class<? extends Annotation> type = getSqlAnnotationType(method);
 
+    boolean flushCache = true;
+    boolean useCache = false;
+    
     if (type == null) {
       type = getSqlProviderAnnotationType(method);
 
@@ -451,15 +453,41 @@ public class MapperAnnotationBuilder {
 
       if (type == SelectProvider.class) {
         type = Select.class;
+        SelectProvider selectProvider = method.getAnnotation(SelectProvider.class);
+        flushCache = selectProvider.flushCache();
+        useCache = selectProvider.useCache();
       } else if (type == InsertProvider.class) {
         type = Insert.class;
+        InsertProvider insertProvider = method.getAnnotation(InsertProvider.class);
+        flushCache = insertProvider.flushCache();
       } else if (type == UpdateProvider.class) {
         type = Update.class;
+        UpdateProvider updateProvider = method.getAnnotation(UpdateProvider.class);
+        flushCache = updateProvider.flushCache();
       } else if (type == DeleteProvider.class) {
         type = Delete.class;
+        DeleteProvider deleteProvider = method.getAnnotation(DeleteProvider.class);
+        flushCache = deleteProvider.flushCache();
+      }
+    } else {
+      if (type == Select.class) {
+        Select select = method.getAnnotation(Select.class);
+        flushCache = select.flushCache();
+        useCache = select.useCache();
+      } else if (type == Insert.class) {
+        Insert insert = method.getAnnotation(Insert.class);
+        flushCache = insert.flushCache();
+      } else if (type == Update.class) {
+        Update update = method.getAnnotation(Update.class);
+        flushCache = update.flushCache();
+      } else if (type == Delete.class) {
+        Delete delete = method.getAnnotation(Delete.class);
+        flushCache = delete.flushCache();
       }
     }
-
+    
+    cacheConfig = new CacheConfig(flushCache, useCache);
+            
     return SqlCommandType.valueOf(type.getSimpleName().toUpperCase(Locale.ENGLISH));
   }
 

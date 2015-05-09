@@ -29,10 +29,6 @@ import org.apache.ibatis.mapping.StatementType;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Options {
-  boolean useCache() default true;
-
-  boolean flushCache() default false;
-
   ResultSetType resultSetType() default ResultSetType.FORWARD_ONLY;
 
   StatementType statementType() default StatementType.PREPARED;

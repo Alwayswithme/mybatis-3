@@ -29,4 +29,6 @@ public @interface UpdateProvider {
   Class<?> type();
 
   String method();
+
+  boolean flushCache() default true;
 }

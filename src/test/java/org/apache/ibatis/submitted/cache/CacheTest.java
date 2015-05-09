@@ -168,4 +168,36 @@ public class CacheTest {
     }
   }
 
+  /*
+   * Test Plan with Autocommit on:
+   *  1) SqlSession 1 executes "select * from A".
+   *  2) SqlSession 1 closes.
+   *  3) SqlSession 2 executes "insert into person (id, firstname, lastname) values (3, hello, world)"
+   *  4) SqlSession 2 closes.
+   *  5) SqlSession 3 executes "select * from A".
+   *  6) SqlSession 3 closes.
+   *
+   * Assert:
+   *   Step 6 returns 3 row.
+   *  
+   */
+  @Test
+  public void testplan4WithOptions() {
+    try( SqlSession sqlSession1 = sqlSessionFactory.openSession(true)) {
+      PersonMapper pm = sqlSession1.getMapper(PersonMapper.class);
+      Assert.assertEquals(2, pm.findAll().size());
+    }
+
+    try ( SqlSession sqlSession2 = sqlSessionFactory.openSession(true)) {
+      PersonMapper pm = sqlSession2.getMapper(PersonMapper.class);
+      Person p = new Person(3, "hello", "world");
+      pm.create(p);
+    }
+
+    try ( SqlSession sqlSession3 = sqlSessionFactory.openSession(true)) {
+      PersonMapper pm = sqlSession3.getMapper(PersonMapper.class);
+      Assert.assertEquals(3, pm.findAll().size());
+    }
+  }
+  
 }

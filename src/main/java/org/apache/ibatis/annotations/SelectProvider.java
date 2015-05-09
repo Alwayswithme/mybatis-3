@@ -29,4 +29,8 @@ public @interface SelectProvider {
   Class<?> type();
 
   String method();
+
+  boolean useCache() default true;
+
+  boolean flushCache() default false;
 }

@@ -27,4 +27,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 public @interface Insert {
   String[] value();
+
+  boolean flushCache() default true;
 }

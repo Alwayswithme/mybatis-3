@@ -29,4 +29,6 @@ public @interface InsertProvider {
   Class<?> type();
 
   String method();
+
+  boolean flushCache() default true;
 }

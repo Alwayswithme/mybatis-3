@@ -29,4 +29,6 @@ public @interface DeleteProvider {
   Class<?> type();
 
   String method();
+
+  boolean flushCache() default true;
 }
